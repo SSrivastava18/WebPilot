@@ -9,10 +9,13 @@
   "dependencies": {
     "@langchain/core": "^1.1.48",
     "@langchain/groq": "^1.2.1",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
+    "jsonwebtoken": "^9.0.3",
     "langchain": "^1.4.4",
+    "mongoose": "^9.6.3",
     "playwright": "^1.60.0",
     "zod": "^3.25.76"
   },

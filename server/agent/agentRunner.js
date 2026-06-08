@@ -232,253 +232,73 @@ async function createNewTab() {
 }
 
 // ======================================================
-// TASK PARSER — extract structured intent from prompt
+// LLM SETUP
 // ======================================================
 
 const llm = new ChatGroq({
   apiKey: process.env.GROQ_API_KEY,
   model: "llama-3.3-70b-versatile",
-  temperature: 0.1,
+  temperature: 0.2,
 });
 
-async function parseTaskIntent(task) {
-  const parsePrompt = `
-You are a task parser. Extract structured intent from the user query below.
+// ======================================================
+// STEP 1 — LLM PLANS WHICH URLS TO OPEN
+// ======================================================
 
-Query: "${task}"
+async function planUrls(task) {
+  const today = new Date().toISOString().slice(0, 10);
 
-Respond ONLY with valid JSON (no markdown, no explanation):
-{
-  "category": "flights|hotels|restaurants|shopping|general",
-  "origin": "city or null",
-  "destination": "city or null",
-  "date": "date string or null",
-  "budget": "budget string or null",
-  "product": "product name or null",
-  "location": "location or null",
-  "extras": "any other key detail or null"
-}
+  const prompt = `
+You are WebPilot's URL planner. Your only job is to decide which URLs to open in a browser to best answer the user's query.
+
+TODAY'S DATE: ${today}
+
+USER QUERY: "${task}"
+
+RULES:
+- Choose 3 to 4 URLs that will have the most relevant, high-quality content for this query
+- Use the REAL websites that actual humans use for this kind of search
+- Build SPECIFIC search URLs with the query terms already filled in — not just homepages
+- Think broadly: for travel use TripAdvisor/tourism sites, for YouTube use youtube.com/search, for places use Google Maps or tourism boards, for news use news sites, for products use e-commerce sites, for learning use YouTube/Udemy/Coursera, etc.
+- For YouTube queries, generate youtube.com/search?search_query=... URLs or specific channel URLs
+- For "places to visit" queries, use TripAdvisor, tourism board sites, travel blogs, Google search
+- For flights use Skyscanner/MakeMyTrip/Goibibo with city codes in the URL
+- For hotels use Booking.com/MakeMyTrip/Agoda with location in the URL
+- For shopping use Amazon/Flipkart with search terms in the URL
+- For restaurants use Zomato/TripAdvisor with city in the URL
+- NEVER return just a homepage — always include the search query in the URL
+- URLs must be real, valid, and publicly accessible without login
+
+Respond ONLY with a valid JSON array. No markdown, no explanation:
+[
+  { "name": "Site Name", "url": "https://full-url-with-search-terms" },
+  { "name": "Site Name", "url": "https://full-url-with-search-terms" },
+  { "name": "Site Name", "url": "https://full-url-with-search-terms" }
+]
 `;
+
   try {
-    const res = await llm.invoke(parsePrompt);
+    const res = await llm.invoke(prompt);
     const text = res.content.replace(/```json|```/g, "").trim();
-    return JSON.parse(text);
-  } catch {
-    return { category: "general", origin: null, destination: null };
+    const parsed = JSON.parse(text);
+
+    // Validate structure
+    if (!Array.isArray(parsed)) throw new Error("Not an array");
+    const valid = parsed.filter(
+      (item) => item && typeof item.name === "string" && typeof item.url === "string" && item.url.startsWith("http")
+    );
+
+    console.log("📋 Planned URLs:");
+    valid.forEach((u) => console.log(`   ${u.name}: ${u.url}`));
+
+    return valid;
+  } catch (err) {
+    console.warn("⚠️  URL planning failed, using Google fallback:", err.message);
+    return [
+      { name: "Google Search", url: `https://www.google.com/search?q=${encodeURIComponent(task)}` },
+      { name: "DuckDuckGo",    url: `https://duckduckgo.com/?q=${encodeURIComponent(task)}` },
+    ];
   }
-}
-
-// ======================================================
-// TRUSTED SOURCES with URL BUILDERS
-// ======================================================
-
-const SOURCE_CONFIG = {
-  flights: [
-    {
-      name: "Skyscanner",
-      base: "https://www.skyscanner.co.in",
-      buildUrl: (intent) => {
-        if (intent.origin && intent.destination) {
-          const orig = intent.origin.slice(0, 3).toUpperCase();
-          const dest = intent.destination.slice(0, 3).toUpperCase();
-          const date = intent.date
-            ? intent.date.replace(/-/g, "")
-            : getTomorrowDate();
-          return `https://www.skyscanner.co.in/transport/flights/${orig}/${dest}/${date}/`;
-        }
-        return "https://www.skyscanner.co.in";
-      },
-    },
-    {
-      name: "MakeMyTrip",
-      base: "https://www.makemytrip.com",
-      buildUrl: (intent) => {
-        if (intent.origin && intent.destination) {
-          const orig = cityToCode(intent.origin);
-          const dest = cityToCode(intent.destination);
-          const date = intent.date || getTomorrowDateFormatted();
-          return `https://www.makemytrip.com/flights/oneway-${orig}-to-${dest}/${date}`;
-        }
-        return "https://www.makemytrip.com/flights/";
-      },
-    },
-    {
-      name: "Goibibo",
-      base: "https://www.goibibo.com",
-      buildUrl: (intent) => {
-        if (intent.origin && intent.destination) {
-          const orig = cityToCode(intent.origin);
-          const dest = cityToCode(intent.destination);
-          const date = intent.date?.replace(/-/g, "") || getTomorrowDate();
-          return `https://www.goibibo.com/flights/search/?source=${orig}&destination=${dest}&dateofdeparture=${date}&travellers=1&class=E&seatsavail=false`;
-        }
-        return "https://www.goibibo.com/flights/";
-      },
-    },
-    {
-      name: "Cleartrip",
-      base: "https://www.cleartrip.com",
-      buildUrl: (intent) => {
-        if (intent.origin && intent.destination) {
-          const orig = cityToCode(intent.origin);
-          const dest = cityToCode(intent.destination);
-          const date = intent.date || getTomorrowDateFormatted();
-          return `https://www.cleartrip.com/flights/oneway?from=${orig}&to=${dest}&depart_date=${date}&adults=1&class=Economy`;
-        }
-        return "https://www.cleartrip.com/flights/";
-      },
-    },
-  ],
-
-  hotels: [
-    {
-      name: "Booking.com",
-      base: "https://www.booking.com",
-      buildUrl: (intent) => {
-        const loc = intent.destination || intent.location || "";
-        return `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(loc)}&lang=en-gb`;
-      },
-    },
-    {
-      name: "MakeMyTrip Hotels",
-      base: "https://www.makemytrip.com",
-      buildUrl: (intent) => {
-        const loc = intent.destination || intent.location || "";
-        return `https://www.makemytrip.com/hotels/${encodeURIComponent(loc.toLowerCase())}-hotels/`;
-      },
-    },
-    {
-      name: "Goibibo Hotels",
-      base: "https://www.goibibo.com",
-      buildUrl: (intent) => {
-        const loc = intent.destination || intent.location || "";
-        return `https://www.goibibo.com/hotels/search/?city=${encodeURIComponent(loc)}`;
-      },
-    },
-    {
-      name: "Agoda",
-      base: "https://www.agoda.com",
-      buildUrl: (intent) => {
-        const loc = intent.destination || intent.location || "";
-        return `https://www.agoda.com/search?city=${encodeURIComponent(loc)}`;
-      },
-    },
-  ],
-
-  restaurants: [
-    {
-      name: "Zomato",
-      base: "https://www.zomato.com",
-      buildUrl: (intent) => {
-        const loc = intent.location || intent.destination || "";
-        const city = loc.toLowerCase().replace(/\s+/g, "-");
-        return `https://www.zomato.com/${city}/restaurants`;
-      },
-    },
-    {
-      name: "Swiggy",
-      base: "https://www.swiggy.com",
-      buildUrl: () => "https://www.swiggy.com/restaurants",
-    },
-    {
-      name: "TripAdvisor",
-      base: "https://www.tripadvisor.in",
-      buildUrl: (intent) => {
-        const loc = intent.location || intent.destination || "";
-        return `https://www.tripadvisor.in/Search?q=${encodeURIComponent(loc + " restaurants")}`;
-      },
-    },
-  ],
-
-  shopping: [
-    {
-      name: "Flipkart",
-      base: "https://www.flipkart.com",
-      buildUrl: (intent) => {
-        const q = intent.product || intent.extras || "";
-        return `https://www.flipkart.com/search?q=${encodeURIComponent(q)}`;
-      },
-    },
-    {
-      name: "Amazon.in",
-      base: "https://www.amazon.in",
-      buildUrl: (intent) => {
-        const q = intent.product || intent.extras || "";
-        return `https://www.amazon.in/s?k=${encodeURIComponent(q)}`;
-      },
-    },
-    {
-      name: "Myntra",
-      base: "https://www.myntra.com",
-      buildUrl: (intent) => {
-        const q = intent.product || intent.extras || "";
-        return `https://www.myntra.com/${encodeURIComponent(q)}`;
-      },
-    },
-    {
-      name: "Ajio",
-      base: "https://www.ajio.com",
-      buildUrl: (intent) => {
-        const q = intent.product || intent.extras || "";
-        return `https://www.ajio.com/search/?text=${encodeURIComponent(q)}`;
-      },
-    },
-  ],
-
-  general: [
-    {
-      name: "Google",
-      base: "https://www.google.com",
-      buildUrl: (intent, task) =>
-        `https://www.google.com/search?q=${encodeURIComponent(task)}`,
-    },
-    {
-      name: "DuckDuckGo",
-      base: "https://duckduckgo.com",
-      buildUrl: (intent, task) =>
-        `https://duckduckgo.com/?q=${encodeURIComponent(task)}`,
-    },
-  ],
-};
-
-// ======================================================
-// CITY → IATA CODE MAP
-// ======================================================
-
-const CITY_CODES = {
-  mumbai: "BOM", delhi: "DEL", bangalore: "BLR", bengaluru: "BLR",
-  goa: "GOI", chennai: "MAA", hyderabad: "HYD", kolkata: "CCU",
-  pune: "PNQ", ahmedabad: "AMD", jaipur: "JAI", lucknow: "LKO",
-  kochi: "COK", cochin: "COK", chandigarh: "IXC", srinagar: "SXR",
-  amritsar: "ATQ", varanasi: "VNS", agra: "AGR", nagpur: "NAG",
-  indore: "IDR", bhopal: "BHO", patna: "PAT", ranchi: "IXR",
-  bhubaneswar: "BBI", guwahati: "GAU", leh: "IXL", shimla: "SLV",
-  dehradun: "DED", coimbatore: "CJB", madurai: "IXM", trichy: "TRZ",
-  vizag: "VTZ", visakhapatnam: "VTZ", mangalore: "IXE", calicut: "CCJ",
-  kozhikode: "CCJ", raipur: "RPR", jammu: "IXJ", udaipur: "UDR",
-  jodhpur: "JDH", aurangabad: "IXU", latur: "LTU", bagdogra: "IXB",
-};
-
-function cityToCode(city) {
-  if (!city) return "DEL";
-  const clean = city.toLowerCase().trim();
-  return CITY_CODES[clean] || city.slice(0, 3).toUpperCase();
-}
-
-// ======================================================
-// DATE HELPERS
-// ======================================================
-
-function getTomorrowDate() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10).replace(/-/g, "");
-}
-
-function getTomorrowDateFormatted() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
 }
 
 // ======================================================
@@ -488,23 +308,23 @@ function getTomorrowDateFormatted() {
 const failedSites = new Set();
 
 // ======================================================
-// SMART OPEN WITH ANTI-BOT EVASION
+// STEP 2 — OPEN EACH URL & SCRAPE CONTENT
 // ======================================================
 
 async function smartOpen(url, siteName) {
   try {
     const page = await createNewTab();
 
-    // Random human-like delay
-    await page.waitForTimeout(Math.random() * 800 + 400);
+    // Human-like delay
+    await page.waitForTimeout(Math.random() * 600 + 300);
 
     await page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: 35000,
     });
 
-    // Wait a bit more for JS to render
-    await page.waitForTimeout(2000);
+    // Let JS-rendered content settle
+    await page.waitForTimeout(2200);
 
     const title = await page.title();
     const titleLow = title.toLowerCase();
@@ -515,180 +335,124 @@ async function smartOpen(url, siteName) {
       titleLow.includes("blocked") ||
       titleLow.includes("403")
     ) {
-      throw new Error(`Blocked by ${siteName}: ${title}`);
+      throw new Error(`Blocked: ${title}`);
     }
 
-    // Extract meaningful content
     const content = await page.evaluate(() => {
-      // Remove junk nodes
-      const remove = ["script", "style", "nav", "footer", "iframe", "noscript", "header", "aside"];
-      remove.forEach((tag) => {
-        document.querySelectorAll(tag).forEach((el) => el.remove());
-      });
+      // Strip noise
+      ["script", "style", "nav", "footer", "iframe", "noscript", "header", "aside", ".ad", ".cookie-banner"]
+        .forEach((sel) => document.querySelectorAll(sel).forEach((el) => el.remove()));
 
-      // Grab main content selectors first
-      const selectors = [
-        "main", "article", '[role="main"]',
-        ".results", ".search-results", ".listing",
-        ".flight-listing", ".hotel-list", ".product-list",
+      // Try semantic content areas first
+      const candidates = [
+        "main", "article", '[role="main"]', "#main-content",
+        ".results", ".search-results", ".listings", ".content-area",
+        ".ytd-search", "#contents",           // YouTube
+        ".entry-content", ".post-body",        // Blogs
+        ".attraction-list", ".poi-list",       // TripAdvisor
+        "#product-list", ".products-grid",     // Shopping
         ".content", "#content", ".container",
       ];
 
-      for (const sel of selectors) {
+      for (const sel of candidates) {
         const el = document.querySelector(sel);
-        if (el && el.innerText.trim().length > 200) {
-          return el.innerText.replace(/\s+/g, " ").slice(0, 3500);
+        if (el && el.innerText.trim().length > 150) {
+          return el.innerText.replace(/\s+/g, " ").trim().slice(0, 4000);
         }
       }
 
-      return document.body.innerText.replace(/\s+/g, " ").slice(0, 3500);
+      return document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 4000);
     });
 
-    console.log(`✅ Scraped: ${siteName} (${content.length} chars)`);
+    console.log(`✅ Scraped: ${siteName} — ${content.length} chars`);
 
-    return {
-      success: true,
-      page,
-      siteName,
-      url,
-      title,
-      content,
-    };
+    return { success: true, page, siteName, url, title, content };
   } catch (err) {
     console.log(`❌ Failed: ${siteName} — ${err.message}`);
     failedSites.add(url);
-    return {
-      success: false,
-      siteName,
-      url,
-      error: err.message,
-    };
+    return { success: false, siteName, url, error: err.message };
   }
 }
 
-// ======================================================
-// OPEN SOURCES WITH FALLBACK
-// ======================================================
-
-async function openBestSources(task, intent) {
-  const category = intent.category || "general";
-  const sources = SOURCE_CONFIG[category] || SOURCE_CONFIG.general;
-
+async function openAllSources(plannedUrls) {
   const results = [];
-  let opened = 0;
-  const TARGET = 3; // Try to get at least 3 good sources
 
-  for (const source of sources) {
-    if (opened >= TARGET) break;
-
-    const url = source.buildUrl(intent, task);
-
-    if (failedSites.has(source.base)) {
-      console.log(`⏭️  Skipping known-failed: ${source.name}`);
+  for (const { name, url } of plannedUrls) {
+    // Skip if this domain was already confirmed blocked
+    const base = new URL(url).origin;
+    if (failedSites.has(url)) {
+      console.log(`⏭️  Skipping known-failed: ${name}`);
       continue;
     }
 
-    console.log(`🌍 Opening: ${source.name} → ${url}`);
-    const result = await smartOpen(url, source.name);
+    const result = await smartOpen(url, name);
 
     if (result.success) {
       results.push(result);
-      opened++;
     } else {
-      // Immediate fallback: try the base homepage instead
-      if (url !== source.base) {
-        console.log(`🔄 Fallback to homepage: ${source.name}`);
-        const fallback = await smartOpen(source.base, source.name + " (homepage)");
-        if (fallback.success) {
-          results.push(fallback);
-          opened++;
-        }
+      // Fallback: try base homepage if the specific search URL failed
+      if (url !== base && !failedSites.has(base)) {
+        console.log(`🔄 Retrying homepage: ${name}`);
+        const fallback = await smartOpen(base, `${name} (homepage)`);
+        if (fallback.success) results.push(fallback);
       }
     }
   }
 
-  // If category sources all failed, fall back to Google
+  // Last resort: Google
   if (results.length === 0) {
-    console.log("🆘 All sources failed — falling back to Google search");
-    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(task)}`;
-    const google = await smartOpen(googleUrl, "Google Search");
-    if (google.success) results.push(google);
+    console.log("🆘 All sources failed — falling back to Google");
+    const g = await smartOpen(
+      `https://www.google.com/search?q=${encodeURIComponent(plannedUrls[0]?.url || "search")}`,
+      "Google Search"
+    );
+    if (g.success) results.push(g);
   }
 
   return results;
 }
 
 // ======================================================
-// LLM SUMMARIZER
+// STEP 3 — LLM SUMMARIZES SCRAPED CONTENT
 // ======================================================
 
-async function summarizeResults(task, intent, scrapedResults) {
-  const category = intent.category;
-
+async function summarizeResults(task, scrapedResults) {
   let websiteData = "";
   for (const r of scrapedResults) {
     websiteData += `
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SOURCE: ${r.siteName}
 URL: ${r.url}
 TITLE: ${r.title}
 
 CONTENT:
 ${r.content}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
   }
-
-  const categoryInstructions = {
-    flights: `
-- List available flights with airline, departure/arrival times, and prices
-- Compare prices across all sources
-- Highlight the cheapest option clearly
-- Mention layovers, duration, and class if visible
-- Sort by price (cheapest first)
-`,
-    hotels: `
-- List hotels with name, price per night, rating, and location
-- Compare across sources
-- Highlight best value options
-- Mention amenities, breakfast, cancellation policy if visible
-`,
-    restaurants: `
-- List top restaurants with name, cuisine, rating, and approximate cost
-- Mention location and specialties
-- Highlight must-visit picks
-`,
-    shopping: `
-- List products with name, price, seller, rating, and delivery info
-- Compare prices across all sources
-- Highlight cheapest option and best-rated option
-- Mention offers, discounts, and EMI options if visible
-`,
-    general: `
-- Provide a concise, structured summary of findings
-- Highlight the most relevant and actionable information
-`,
-  };
-
-  const instructions = categoryInstructions[category] || categoryInstructions.general;
 
   const prompt = `
 You are WebPilot, an intelligent browser research agent.
 
-USER TASK: ${task}
+USER'S QUESTION: "${task}"
 
-EXTRACTED WEBSITE DATA:
+CONTENT SCRAPED FROM LIVE WEBSITES:
 ${websiteData}
 
-ANALYSIS INSTRUCTIONS:
-${instructions}
+YOUR JOB:
+- Carefully read all the website content above
+- Extract and organize only what's relevant to the user's question
+- Compare and synthesize across sources where applicable
+- Be specific: include names, ratings, prices, links, channel names, place names — whatever real data is visible
+- If a source had no useful content, ignore it
+- End with a "🏆 Best Pick" or "🏆 Top Recommendation" section
 
-FORMAT YOUR RESPONSE AS:
-1. Start with a 1-sentence executive summary
-2. Then provide structured findings per source
-3. End with a "🏆 Best Option" recommendation
+FORMAT:
+1. One-line summary of what you found
+2. Findings organized by source or by item (whichever is clearer)
+3. 🏆 Best Pick / Top Recommendation
 
-Be concise, data-focused, and actionable. If data is missing or unclear, say so honestly.
+Be factual, specific, and useful. Do not make things up.
 `;
 
   const response = await llm.invoke(prompt);
@@ -696,7 +460,7 @@ Be concise, data-focused, and actionable. If data is missing or unclear, say so 
 }
 
 // ======================================================
-// MAIN AGENT
+// MAIN AGENT — fully LLM-driven, zero hardcoding
 // ======================================================
 
 export async function runAgent(task) {
@@ -705,51 +469,41 @@ export async function runAgent(task) {
   console.log("══════════════════════════════\n");
 
   try {
-    // Step 1: Parse intent
-    console.log("🧠 Parsing intent...");
-    const intent = await parseTaskIntent(task);
-    console.log("Intent:", JSON.stringify(intent));
+    // Step 1: LLM decides which URLs to open
+    console.log("🧠 Planning URLs...");
+    const plannedUrls = await planUrls(task);
 
-    // Step 2: Open best sources with smart URLs
-    console.log("🌐 Opening sources...");
-    const scrapedResults = await openBestSources(task, intent);
+    // Step 2: Open every planned URL in the real browser
+    console.log(`🌐 Opening ${plannedUrls.length} sources...`);
+    const scrapedResults = await openAllSources(plannedUrls);
 
     if (scrapedResults.length === 0) {
       return {
-        summary: "No sources could be accessed. Please try again or check your network.",
+        summary: "Could not access any sources. Please check your network or try rephrasing.",
         steps: [],
         result: "All browser attempts failed.",
-        intent,
       };
     }
 
-    // Step 3: Summarize with LLM
+    // Step 3: LLM reads the scraped content and writes a summary
     console.log("🤖 Analyzing results...");
-    const summary = await summarizeResults(task, intent, scrapedResults);
+    const summary = await summarizeResults(task, scrapedResults);
 
-    // Step 4: Build response
     const steps = scrapedResults.map((r) => ({
       site: r.siteName,
       url: r.url,
       title: r.title,
       status: "success",
-      chars: r.content?.length || 0,
     }));
 
-    return {
-      summary,
-      steps,
-      result: summary,
-      intent,
-      sourcesOpened: scrapedResults.length,
-    };
+    return { summary, steps, result: summary };
+
   } catch (err) {
     console.error("AGENT ERROR:", err);
     return {
       summary: "Agent encountered an error while processing your task.",
       steps: [],
       result: err?.message || String(err),
-      intent: {},
     };
   }
 }
