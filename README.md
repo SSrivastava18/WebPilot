@@ -9,7 +9,6 @@
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
 [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=flat-square&logo=langchain&logoColor=white)](https://langchain.com/)
 [![Playwright](https://img.shields.io/badge/Playwright-2EAD33?style=flat-square&logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Groq](https://img.shields.io/badge/Groq-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/)
 
@@ -21,33 +20,50 @@
 
 ## 🧠 What is WebPilot?
 
-WebPilot is a full-stack **Agentic AI** application where a Large Language Model doesn't just chat — it **acts**. Give it a task in plain English and WebPilot autonomously:
+WebPilot is a full-stack **Agentic AI + GenAI** application where a Large Language Model doesn't just chat — it **acts**. Give it any task in plain English and WebPilot autonomously:
 
-- 🌐 Opens real browser tabs
-- 🔍 Searches Google
-- 📄 Reads and extracts page content
-- 🖱️ Clicks buttons and fills forms
-- 📊 Compares and analyzes results
-- ✅ Returns a structured answer
+- 🧠 **Thinks** — the LLM reasons about your query and plans which websites to open
+- 🌐 **Browses** — opens real tabs in **your system's default browser** (Chrome, Firefox, Edge, Brave, Safari)
+- 📄 **Reads** — extracts meaningful content from each page, skipping ads and noise
+- 📊 **Compares** — synthesizes data across multiple sources
+- ✅ **Answers** — returns a structured, actionable summary with a top recommendation
 
 > **Normal chatbot** → only generates text  
-> **WebPilot** → thinks, decides, uses tools, and completes tasks step by step
+> **WebPilot** → reasons, plans URLs, opens real browser tabs, reads live pages, and summarizes findings
 
 ---
 
-## 🎯 Real-Life Example
+## 🎯 Real-Life Examples
 
-**You type:**
+**Flights:**
 ```
-Find the cheapest flight from Delhi to Mumbai for tomorrow
+Find the cheapest flight from Goa to Mumbai for tomorrow
 ```
+→ Opens Skyscanner, MakeMyTrip, Goibibo with pre-filled search • Compares prices • Returns cheapest option
 
-**WebPilot:**
-1. 🔍 Searches Google for flight options
-2. 🌐 Opens flight booking websites
-3. 📄 Extracts prices and schedules
-4. 📊 Compares all results
-5. ✅ Returns the best option with details
+**Places:**
+```
+Best places to visit in Bihar with ratings
+```
+→ Opens TripAdvisor, Incredible India, tourism boards • Extracts ratings & descriptions • Ranks top picks
+
+**YouTube:**
+```
+Best YouTubers for machine learning
+```
+→ Opens YouTube search + top channel pages • Reads about, subscriber counts, content style • Recommends top 3
+
+**Shopping:**
+```
+Compare iPhone 15 prices across Flipkart and Amazon
+```
+→ Opens both with search pre-filled • Extracts prices, offers, EMI • Highlights best deal
+
+**Anything else:**
+```
+Latest news about AI regulation in India
+```
+→ LLM picks the right news sites automatically • Summarizes key developments
 
 ---
 
@@ -55,14 +71,15 @@ Find the cheapest flight from Delhi to Mumbai for tomorrow
 
 | Feature | Description |
 |--------|-------------|
-| 🧠 **LLM Brain** | Powered by Groq's LLaMA 3.3 70B — fast, free, powerful |
-| 🌐 **Real Browser** | Playwright controls a real Chromium browser |
-| 🔍 **Google Search** | Searches and parses live Google results |
-| 📄 **Text Extraction** | Reads any webpage's visible content |
-| 🖱️ **Click & Fill** | Interacts with buttons, inputs, and forms |
-| 📸 **Screenshots** | Captures the browser at any point |
-| 🔄 **Multi-Step Reasoning** | Breaks complex tasks into sequential steps |
-| 💬 **Chat UI** | Clean terminal-style React interface |
+| 🧠 **LLM URL Planner** | LLM decides which 3–4 websites to open per query — zero hardcoding |
+| 🌐 **Default Browser** | Opens sites in your actual Chrome / Firefox / Edge / Brave / Safari |
+| 🔄 **Smart Fallback** | If a site blocks or fails, automatically tries the next best source |
+| 📄 **Smart Extraction** | Strips ads/nav/footers, targets semantic content areas for clean text |
+| 📊 **LLM Summarizer** | Reads raw scraped content and writes a structured comparison |
+| 🏆 **Best Pick** | Every response ends with a top recommendation |
+| 💬 **Chat UI** | Clean dark-mode React interface with source cards and intent badges |
+| 📋 **Chat History** | Conversations saved locally and accessible from the sidebar |
+| 🔁 **Cross-Platform** | Browser detection works on Windows, macOS, and Linux |
 
 ---
 
@@ -71,31 +88,47 @@ Find the cheapest flight from Delhi to Mumbai for tomorrow
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   React Frontend                     │
-│              (Chat UI · Vite · Tailwind)             │
+│     Chat UI · Intent Badge · Source Cards · History  │
 └─────────────────────┬───────────────────────────────┘
                       │  HTTP POST /api/agent
 ┌─────────────────────▼───────────────────────────────┐
 │               Express Backend (Node.js)              │
-│                  REST API Server                     │
 └─────────────────────┬───────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────┐
-│            LangChain Agent (AgentExecutor)           │
-│         LLaMA 3.3 70B via Groq API                   │
+│                  agentRunner.js                      │
 │                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐ │
-│  │  Decide  │→│ Pick Tool│→│   Execute Tool       │ │
-│  └──────────┘ └──────────┘ └──────────────────────┘ │
+│  Step 1 ── planUrls()                                │
+│             LLM reads query → generates 3-4 URLs     │
+│             (any website, any category)              │
+│                                                      │
+│  Step 2 ── openAllSources()                          │
+│             Playwright opens each URL in real browser│
+│             Extracts clean text · Fallback on fail   │
+│                                                      │
+│  Step 3 ── summarizeResults()                        │
+│             LLM reads scraped content → structured   │
+│             comparison + 🏆 Best Pick                │
 └─────────────────────┬───────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────┐
-│           Playwright Browser Tools                   │
-│  open_url · google_search · extract_page_text        │
-│  click_element · fill_input · take_screenshot        │
+│         System Default Browser (via Playwright)      │
+│   Chrome · Firefox · Edge · Brave · Safari · Opera   │
 └─────────────────────┬───────────────────────────────┘
                       │
-              🌐 Real Websites
+              🌐 Any Website on the Internet
 ```
+
+---
+
+## 🧬 GenAI vs Agentic AI — How WebPilot Uses Both
+
+| Layer | Type | What it does |
+|-------|------|-------------|
+| **URL Planner** | 🤖 Agentic AI | LLM autonomously decides which sites to open based on the query |
+| **Summarizer** | ✨ GenAI | LLM generates a structured comparison from raw scraped text |
+| **Fallback Logic** | 🤖 Agentic AI | Agent adapts when sites fail — retries, skips, finds alternatives |
+| **Browser Control** | 🤖 Agentic AI | Playwright acts on the real web as an autonomous agent |
 
 ---
 
@@ -103,16 +136,15 @@ Find the cheapest flight from Delhi to Mumbai for tomorrow
 
 **Frontend**
 - React 18 + Vite
-- Custom CSS (dark terminal theme)
+- Custom CSS (dark theme, DM Sans font)
 
 **Backend**
 - Node.js + Express
-- Playwright (Chromium)
+- Playwright (controls your system's real browser)
 
 **AI Layer**
-- LangChain (`langchain`, `@langchain/core`, `@langchain/groq`)
 - Groq API — LLaMA 3.3 70B Versatile
-- `DynamicStructuredTool` + `AgentExecutor`
+- Two-prompt pipeline: URL planning + result summarization
 
 ---
 
@@ -122,6 +154,7 @@ Find the cheapest flight from Delhi to Mumbai for tomorrow
 
 - Node.js v18+
 - A free [Groq API key](https://console.groq.com/keys)
+- Any browser installed (Chrome, Firefox, Edge, Brave — WebPilot auto-detects)
 
 ### 1. Clone the repo
 
@@ -135,8 +168,10 @@ cd WebPilot
 ```bash
 cd server
 npm install
-npx playwright install chromium
+npx playwright install
 ```
+
+> `npx playwright install` installs browser drivers as fallback. WebPilot will still prefer your system browser.
 
 Create a `.env` file inside `server/`:
 
@@ -154,6 +189,8 @@ npm run dev
 You should see:
 ```
 GROQ_API_KEY: Loaded ✅
+🌐 Launching: Google Chrome
+✅ Google Chrome started
 🚀 Server running at http://localhost:5000
 ```
 
@@ -171,36 +208,79 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## 💡 Usage
 
-Once both servers are running, type any task in the chat:
+Once both servers are running, type any task — WebPilot handles the rest:
 
 ```
-Find hotels in Goa under ₹3000 with good ratings
+Find the cheapest flight from Goa to Mumbai for tomorrow
+```
+```
+Best places to visit in Bihar with ratings
+```
+```
+Best YouTubers for machine learning
 ```
 ```
 Compare iPhone 15 prices across Flipkart and Amazon
 ```
 ```
-Search for top 5 restaurants in Connaught Place, Delhi
+Top 5 restaurants in Connaught Place, Delhi
 ```
 ```
-Find the latest news about AI in India
+Latest news about AI regulation in India
+```
+```
+Best hotels in Manali under ₹2000
+```
+```
+Top GitHub repos for learning system design
 ```
 
-WebPilot will autonomously browse the web and return results with a full breakdown of every action it took.
+WebPilot figures out which websites to open, opens them in your browser, reads the content, and returns a full structured comparison.
 
 ---
 
-## 🔧 Agent Tools
+## 🌐 How Browser Detection Works
 
-| Tool | What it does |
-|------|-------------|
-| `google_search` | Searches Google, returns top 5 results |
-| `open_url` | Opens any URL in the real browser |
-| `extract_page_text` | Reads all visible text from the current page |
-| `click_element` | Clicks any element by CSS selector |
-| `fill_input` | Types into any input field |
-| `take_screenshot` | Saves a screenshot of the current page |
-| `get_page_info` | Gets the current page title and URL |
+WebPilot reads your OS-level default browser setting and launches that exact binary via Playwright — no bundled Chromium, no separate install needed.
+
+| OS | How it detects |
+|----|----------------|
+| **Windows** | Reads `HKCU\...\UrlAssociations\https\UserChoice` from registry |
+| **macOS** | Reads `com.apple.LaunchServices` bundle ID |
+| **Linux** | Runs `xdg-settings get default-web-browser` |
+
+Supported browsers and their Playwright engine mapping:
+
+| Browser | Engine |
+|---------|--------|
+| Google Chrome | `chromium` |
+| Microsoft Edge | `chromium` |
+| Brave | `chromium` |
+| Opera | `chromium` |
+| Firefox | `firefox` |
+| Safari (macOS) | `webkit` |
+
+If detection fails, WebPilot gracefully falls back to Playwright's bundled Chromium.
+
+---
+
+## 🔄 Fallback Chain
+
+WebPilot never gives up on a query:
+
+```
+LLM plans 3-4 URLs
+    ↓
+Try specific search URL
+    ↓ (if blocked/failed)
+Try site homepage
+    ↓ (if still failed)
+Skip to next planned source
+    ↓ (if all sources fail)
+Fall back to Google Search
+```
+
+Sites that repeatedly fail are tracked in memory and skipped automatically in future requests.
 
 ---
 
@@ -210,14 +290,13 @@ WebPilot will autonomously browse the web and return results with a full breakdo
 WebPilot/
 ├── my-app/                  ← React Frontend
 │   ├── src/
-│   │   └── App.jsx          ← Main chat UI
+│   │   └── App.js           ← Chat UI with source cards, intent badges, history
 │   └── package.json
 │
 └── server/                  ← Express Backend
     ├── server.js            ← API server
     ├── agent/
-    │   └── agentRunner.js   ← LangChain agent + Playwright tools
-    ├── screenshots/         ← Auto-saved screenshots
+    │   └── agentRunner.js   ← LLM URL planner + Playwright browser control
     ├── .env                 ← Your API keys (not committed)
     └── package.json
 ```
@@ -235,20 +314,23 @@ WebPilot/
 
 ## 🧩 Key Concepts Demonstrated
 
-- **Agentic AI** — LLM autonomously decides which tools to use and in what order
-- **Tool Calling** — structured function calling with Zod schema validation
-- **Multi-Step Reasoning** — agent plans and executes a sequence of browser actions
-- **Browser Automation** — real Chromium controlled via Playwright
-- **Full-Stack AI App** — React + Express + LangChain working together
+- **Agentic AI** — LLM autonomously plans which URLs to visit based on any query
+- **GenAI** — LLM generates structured summaries from raw scraped web content
+- **LLM-Driven Routing** — zero hardcoded categories; the model decides everything
+- **Browser Automation** — controls your real installed browser via Playwright
+- **Smart Fallback** — multi-layer resilience when sites block or fail
+- **Cross-Platform** — browser detection for Windows, macOS, and Linux
+- **Full-Stack AI App** — React + Express + Groq LLM working together
 
 ---
 
 ## 🛣️ Roadmap
 
-- [ ] MongoDB task history / memory
-- [ ] Real-time streaming of agent steps
-- [ ] SerpAPI integration (bypass bot detection)
-- [ ] Multi-tab browser support
+- [ ] Real-time streaming of agent steps to frontend
+- [ ] MongoDB task history and memory across sessions
+- [ ] SerpAPI / ScraperAPI integration to bypass aggressive bot detection
+- [ ] Multi-tab parallel browsing for faster results
+- [ ] ReAct loop — agent reads page, decides next action, loops
 - [ ] Voice input support
 - [ ] Docker deployment
 
