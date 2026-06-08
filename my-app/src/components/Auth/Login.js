@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../Context/AuthContext';
+import { GoogleLogin } from '@react-oauth/google';
 import './Auth.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -9,25 +10,47 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
+  const [form, setForm]     = useState({ email: '', password: '' });
+  const [error, setError]   = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
+  // ── Email/password login ──────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
+      const res  = await fetch(`${API_BASE}/auth/login`, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body:    JSON.stringify(form),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Login failed');
+      login(data.token, data.user);
+      navigate('/');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Google login ──────────────────────────────────────
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setError('');
+    setLoading(true);
+    try {
+      const res  = await fetch(`${API_BASE}/auth/google`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ credential: credentialResponse.credential }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Google login failed');
       login(data.token, data.user);
       navigate('/');
     } catch (err) {
@@ -50,17 +73,27 @@ export default function Login() {
 
         {error && <div className="auth-error">{error}</div>}
 
+        {/* Google button */}
+        <div className="google-btn-wrap">
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => setError('Google sign-in failed. Please try again.')}
+            width="100%"
+            theme="filled_black"
+            shape="rectangular"
+            text="signin_with"
+          />
+        </div>
+
+        <div className="auth-divider"><span>or</span></div>
+
         <form onSubmit={handleSubmit} className="auth-form">
           <div className="auth-field">
             <label htmlFor="email">Email</label>
             <input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={form.email}
-              onChange={handleChange}
+              id="email" name="email" type="email"
+              autoComplete="email" required
+              value={form.email} onChange={handleChange}
               placeholder="you@example.com"
             />
           </div>
@@ -68,13 +101,9 @@ export default function Login() {
           <div className="auth-field">
             <label htmlFor="password">Password</label>
             <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={form.password}
-              onChange={handleChange}
+              id="password" name="password" type="password"
+              autoComplete="current-password" required
+              value={form.password} onChange={handleChange}
               placeholder="••••••••"
             />
           </div>
@@ -85,8 +114,7 @@ export default function Login() {
         </form>
 
         <p className="auth-switch">
-          Don't have an account?{' '}
-          <Link to="/signup">Create one</Link>
+          Don't have an account? <Link to="/signup">Create one</Link>
         </p>
       </div>
     </div>

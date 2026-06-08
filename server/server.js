@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { OAuth2Client } from "google-auth-library";
 
 import { runAgent } from "./agent/agentRunner.js";
 
@@ -14,6 +15,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 app.use(cors());
 app.use(express.json());
@@ -26,13 +28,15 @@ const userSchema = new mongoose.Schema(
   {
     name:     { type: String, required: true, trim: true },
     email:    { type: String, required: true, unique: true, lowercase: true, trim: true },
-    password: { type: String, required: true, minlength: 6, select: false },
+    password: { type: String, minlength: 6, select: false }, // optional for Google users
+    googleId: { type: String, default: null },
+    avatar:   { type: String, default: null },
   },
   { timestamps: true }
 );
 
 userSchema.pre("save", async function () {
-  if (!this.isModified("password")) return;
+  if (!this.isModified("password") || !this.password) return;
   this.password = await bcrypt.hash(this.password, 12);
 });
 
@@ -48,22 +52,10 @@ const User = mongoose.model("User", userSchema);
 
 const historySchema = new mongoose.Schema(
   {
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
+    userId:  { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     task:    { type: String, required: true },
     summary: { type: String, required: true },
-    steps: [
-      {
-        site:   String,
-        url:    String,
-        title:  String,
-        status: String,
-      },
-    ],
+    steps:   [{ site: String, url: String, title: String, status: String }],
   },
   { timestamps: true }
 );
@@ -80,9 +72,11 @@ const generateToken = (id) =>
   });
 
 const userPayload = (u) => ({
-  _id: u._id,
-  name: u.name,
-  email: u.email,
+  _id:      u._id,
+  name:     u.name,
+  email:    u.email,
+  avatar:   u.avatar || null,
+  googleId: u.googleId || null,
   createdAt: u.createdAt,
 });
 
@@ -115,6 +109,7 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 // AUTH ROUTES
 // ======================================================
 
+// POST /api/auth/register
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
@@ -127,7 +122,7 @@ app.post("/api/auth/register", async (req, res) => {
     const user = await User.create({ name, email, password });
     res.status(201).json({ token: generateToken(user._id), user: userPayload(user) });
   } catch (err) {
-    console.error("[REGISTER ERROR]", err.name, err.message);
+    console.error("[REGISTER ERROR]", err.message);
     if (err.name === "ValidationError") {
       const msg = Object.values(err.errors).map((e) => e.message).join(", ");
       return res.status(400).json({ message: msg });
@@ -138,6 +133,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// POST /api/auth/login
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -145,16 +141,52 @@ app.post("/api/auth/login", async (req, res) => {
 
   try {
     const user = await User.findOne({ email }).select("+password");
-    if (!user || !(await user.matchPassword(password)))
+    if (!user || !user.password)
+      return res.status(401).json({ message: "This account uses Google sign-in. Please use Google to log in." });
+    if (!(await user.matchPassword(password)))
       return res.status(401).json({ message: "Invalid email or password" });
 
     res.json({ token: generateToken(user._id), user: userPayload(user) });
   } catch (err) {
-    console.error("[LOGIN ERROR]", err.name, err.message);
+    console.error("[LOGIN ERROR]", err.message);
     res.status(500).json({ message: err.message || "Server error during login" });
   }
 });
 
+// POST /api/auth/google
+app.post("/api/auth/google", async (req, res) => {
+  const { credential } = req.body;
+  if (!credential)
+    return res.status(400).json({ message: "Google credential required" });
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken:  credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const { name, email, picture, sub: googleId } = ticket.getPayload();
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Brand new user — create via Google
+      user = await User.create({ name, email, googleId, avatar: picture });
+    } else if (!user.googleId) {
+      // Existing email/password account — link Google to it
+      user.googleId = googleId;
+      user.avatar   = picture;
+      await user.save();
+    }
+
+    res.json({ token: generateToken(user._id), user: userPayload(user) });
+  } catch (err) {
+    console.error("[GOOGLE AUTH ERROR]", err.message);
+    res.status(401).json({ message: "Invalid Google token" });
+  }
+});
+
+// GET /api/auth/me
 app.get("/api/auth/me", protect, (req, res) => {
   res.json({ user: userPayload(req.user) });
 });
@@ -163,7 +195,6 @@ app.get("/api/auth/me", protect, (req, res) => {
 // HISTORY ROUTES
 // ======================================================
 
-// GET /api/history — fetch only the logged-in user's history
 app.get("/api/history", protect, async (req, res) => {
   try {
     const history = await History.find({ userId: req.user._id })
@@ -171,12 +202,10 @@ app.get("/api/history", protect, async (req, res) => {
       .select("task summary steps createdAt");
     res.json(history);
   } catch (err) {
-    console.error("[HISTORY GET ERROR]", err.message);
     res.status(500).json({ message: "Failed to fetch history" });
   }
 });
 
-// DELETE /api/history/:id — delete one item (owner only)
 app.delete("/api/history/:id", protect, async (req, res) => {
   try {
     const item = await History.findOne({ _id: req.params.id, userId: req.user._id });
@@ -184,24 +213,21 @@ app.delete("/api/history/:id", protect, async (req, res) => {
     await item.deleteOne();
     res.json({ message: "Deleted" });
   } catch (err) {
-    console.error("[HISTORY DELETE ERROR]", err.message);
-    res.status(500).json({ message: "Failed to delete history item" });
+    res.status(500).json({ message: "Failed to delete" });
   }
 });
 
-// DELETE /api/history — clear all history for logged-in user
 app.delete("/api/history", protect, async (req, res) => {
   try {
     await History.deleteMany({ userId: req.user._id });
     res.json({ message: "History cleared" });
   } catch (err) {
-    console.error("[HISTORY CLEAR ERROR]", err.message);
     res.status(500).json({ message: "Failed to clear history" });
   }
 });
 
 // ======================================================
-// AGENT (protected) — auto-saves to history
+// AGENT (protected)
 // ======================================================
 
 app.post("/api/agent", protect, async (req, res) => {
@@ -212,7 +238,6 @@ app.post("/api/agent", protect, async (req, res) => {
     console.log(`\n[NEW TASK] user=${req.user.email} | task=${task}`);
     const result = await runAgent(task);
 
-    // Save this task to the user's history
     await History.create({
       userId:  req.user._id,
       task,
@@ -239,10 +264,9 @@ mongoose
       console.log(`\n🚀 Server running at http://localhost:${PORT}`);
       console.log(`📡 Auth:    POST   http://localhost:${PORT}/api/auth/register`);
       console.log(`📡 Auth:    POST   http://localhost:${PORT}/api/auth/login`);
+      console.log(`📡 Auth:    POST   http://localhost:${PORT}/api/auth/google`);
       console.log(`📡 Agent:   POST   http://localhost:${PORT}/api/agent`);
       console.log(`📡 History: GET    http://localhost:${PORT}/api/history`);
-      console.log(`📡 History: DELETE http://localhost:${PORT}/api/history/:id`);
-      console.log(`📡 History: DELETE http://localhost:${PORT}/api/history`);
     });
   })
   .catch((err) => {

@@ -170,3 +170,34 @@
     padding: 28px 20px;
   }
 }
+/* ── existing Auth.css — add these at the bottom ── */
+
+.google-btn-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+/* Force Google button to full width */
+.google-btn-wrap > div,
+.google-btn-wrap iframe {
+  width: 100% !important;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
